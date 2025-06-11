@@ -186,7 +186,7 @@ class FuzzyDate(str, metaclass=CustomMeta):
             [data_dict[el].lstrip(TRIM_CHAR) for el in DATE_FIELD_ORDER if data_dict[el]]
         )
         if self.hour is not None and self.minute is not None and self.tz:
-            return f"{date_part} {self.hour}:{self.minute} {self.tz}"
+            return f"{date_part} {int(self.hour):02}:{int(self.minute):02} {self.tz}"
         # else
         return date_part
 
@@ -230,6 +230,14 @@ class FuzzyDate(str, metaclass=CustomMeta):
 
 
 class FuzzyDateWidget(forms.MultiWidget):
+
+    # Django is surprisingly resistant to allowing "type='time'" on an input element in
+    # a multi-widget form field.  And we need that type to get the browser to display a
+    # time picker. Overriding the template was the only way I could find to do it.  And
+    # it still won't work if using Grappelli instead of the default admin interface.
+    class CustomTimeInput(forms.TimeInput):
+        template_name = "fuzzy_dates/time_widget.html"        
+    
     def __init__(self, attrs=None):
         # Define the date-related input widgets in the user's preferred order.        
         widgets = [
@@ -238,8 +246,7 @@ class FuzzyDateWidget(forms.MultiWidget):
         ]
         # Now add the time widgets
         widgets += [
-            forms.NumberInput(attrs={"min": 0, "max": 23, "placeholder": "hh"}),
-            forms.NumberInput(attrs={"min": 0, "max": 59, "placeholder": "mm"}),
+            self.CustomTimeInput(attrs={"placeholder": "hh:mm"}),
             forms.Select(choices=EMPTY_CHOICE + tuple([(name, name) for name in sorted(tf.timezone_names)]))
         ]
         super().__init__(widgets, attrs)
@@ -247,10 +254,16 @@ class FuzzyDateWidget(forms.MultiWidget):
     def decompress(self, value):
         if value:  # will be a FuzzyDate object
             data_dict = dict(zip("ymd", value.as_list()))
+            time_str = (
+                f"{int(value.hour):02}:{int(value.minute):02}"
+                if value.hour is not None and value.minute is not None
+                else ""
+            )
             return [
                 data_dict[el] for el in DATE_FIELD_ORDER   # rearrange to the user's preferred order
-            ] + [value.hour or "", value.minute or "", value.tz or ""]
-        return ["", "", "", "", "", ""]
+            ] + [time_str, value.tz or ""]
+        return ["", "", "", "", ""]
+
 
 class FuzzyDateFormField(forms.MultiValueField):
     def __init__(self, *args, **kwargs):
@@ -260,8 +273,7 @@ class FuzzyDateFormField(forms.MultiValueField):
             forms.IntegerField(min_value=1, required=DATE_FIELD_REQUIRED[el])
             for el in DATE_FIELD_ORDER
         ] + [
-            forms.IntegerField(min_value=0, max_value=23, required=False),
-            forms.IntegerField(min_value=0, max_value=59, required=False),
+            forms.TimeField(required=False),
             forms.CharField(required=False)
         ]
         kwargs["require_all_fields"] = False
@@ -272,11 +284,19 @@ class FuzzyDateFormField(forms.MultiValueField):
                 if isinstance(validator, MinValueValidator):
                     validator.message = "Ensure all values are greater than 1."
 
+
     def compress(self, data_list):
         if data_list:
-            args = [el for el in DATE_FIELD_ORDER] + ["hour", "minute", "tz"]
-            data_dict = dict(zip(args, data_list))
-            return FuzzyDate(**data_dict)            
+            date_part = dict(zip(DATE_FIELD_ORDER, data_list[:3]))
+            time_obj = data_list[3]
+            tz_val = data_list[4]
+
+            if time_obj and tz_val:
+                hour = f"{time_obj.hour:02}"
+                minute = f"{time_obj.minute:02}"
+                return FuzzyDate(**date_part, hour=hour, minute=minute, tz=tz_val)
+
+            return FuzzyDate(**date_part)
         return ""
 
 
