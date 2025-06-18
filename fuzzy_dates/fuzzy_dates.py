@@ -6,8 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
-from timezonefinder import TimezoneFinder
-from zoneinfo import ZoneInfo
+from zoneinfo import available_timezones, ZoneInfo
 
 
 # This regex matches dates in the format yyyy, yyyy.mm, or yyyy.mm.dd (other
@@ -42,8 +41,6 @@ DATE_FIELD_WIDGET_NAMES = {
 EMPTY_CHOICE = (("", "---------"),)
 TRIM_CHAR = "0" if getattr(settings, "FUZZY_DATE_TRIM_LEADING_ZEROS", False) else ""
 TZ_PATTERN = re.compile(r"^[A-Za-z]+/[A-Za-z_]+")
-
-tf = TimezoneFinder()
 
 if len(DATE_FIELD_ORDER) != 3 or set(DATE_FIELD_ORDER) != set("ymd"):
     raise ValueError("The FUZZY_DATE_FIELD_ORDER setting must be a 3-character string containing 'y', 'm', and 'd'.")
@@ -84,11 +81,11 @@ class FuzzyDate(str):
 
             elif isinstance(seed, datetime):
                 if seed.tzinfo is None:
-                    raise ValueError("Datetime must be timezone-aware or 'utc'.")
+                    raise ValueError("Datetime must be timezone-aware or 'Etc/UTC'.")
                 elif seed.tzinfo == timezone.utc:
-                    tz_key = "UTC"
+                    tz_key = "Etc/UTC"
                 elif not hasattr(seed.tzinfo, "key"):
-                    raise ValueError("Datetime must use a named IANA zone or UTC.")
+                    raise ValueError("Datetime must use a named IANA zone or 'Etc/UTC'.")
                 else:
                     tz_key = seed.tzinfo.key  # e.g., 'America/Chicago'
                 # else
@@ -293,7 +290,7 @@ class FuzzyDateWidget(forms.MultiWidget):
         # Now add the time widgets
         widgets += [
             self.CustomTimeInput(attrs={"placeholder": "hh:mm"}),
-            forms.Select(choices=EMPTY_CHOICE + tuple([(name, name) for name in sorted(tf.timezone_names)]))
+            forms.Select(choices=EMPTY_CHOICE + tuple([(name, name) for name in sorted(available_timezones())]))
         ]
         super().__init__(widgets, attrs)
         for widget_name, widget in zip(self.widgets_names, self.widgets):
