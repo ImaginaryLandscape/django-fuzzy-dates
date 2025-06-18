@@ -1,6 +1,6 @@
 import calendar
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -85,7 +85,7 @@ class FuzzyDate(str):
             elif isinstance(seed, datetime):
                 if seed.tzinfo is None:
                     raise ValueError("Datetime must be timezone-aware or 'utc'.")
-                elif seed.tzinfo == datetime.timezone.utc:
+                elif seed.tzinfo == timezone.utc:
                     tz_key = "UTC"
                 elif not hasattr(seed.tzinfo, "key"):
                     raise ValueError("Datetime must use a named IANA zone or UTC.")
@@ -123,45 +123,57 @@ class FuzzyDate(str):
             minute = norm(kwargs.get("minute"))
             tz = norm(kwargs.get("tz"))
 
-        # At this point all date and time values should be strings or None, regardless of how they were passed in.
+
+        # Now we have all our values stored in variables "year", "month", etc.  Depending on the type
+        # of seed, some values may be integers.  We must coerce them all to strings before we're done.
         if not {year, month, day, hour, minute, tz} <= {None, ""}:
             # Some date or time element has been specified
             if not year:
                 raise ValueError("Year must be specified if any other date or time component is specified")
 
+            try:
+                year = f"{int(year):04}"
+            except (ValueError, TypeError):
+                raise ValueError("Year must be an integer")
+            
             if day and not month:
                 raise ValueError("If day is specified, month must also be specified")
 
-            month = month or "00"
-            day = day or "00"
-
             try:
-                # Leverage the "datetime" library's "date()" function to check that values
-                # are valid.  We temporarily replace any fuzzy values with 1. This lets us
-                # eliminate invalid dates like 2000.13.01 or 2000.01.32.
-                int_year = int(year)
-                int_month = int(month) if month != "00" else 1
-                int_day = int(day) if day != "00" else 1
-                if int_year < 1000 or int_year > 9999:
-                    # Keep the year within this range as years outside it would break
-                    # sorting (e.g., "900" > "1000" alphanumerically speaking). Later
-                    # on I might try to relax this restriction by padding short years
-                    # with zeros, but it would take some doing.
-                    raise ValueError("The year must be no less than 1000 and no greater than 9999.")
-                # else
+                month = f"{int(month):02}" if month not in ("", None, "00") else "00"
+                day = f"{int(day):02}" if day not in ("", None, "00") else "00"
+            except (ValueError, TypeError):
+                raise ValueError("Month and date, if provided, must be integers")
+
+            # At this point, year, month and day should all be valid numerical strings.
+            # Leverage the "datetime" library's "date()" function to check that values
+            # are valid.  We temporarily replace any fuzzy values with 1. This lets us
+            # eliminate invalid dates like 2000.13.01 or 2000.01.32.
+            int_year = int(year)
+            int_month = int(month) if month != "00" else 1
+            int_day = int(day) if day != "00" else 1
+            if int_year < 1000 or int_year > 9999:
+                # Keep the year within this range as years outside it would break
+                # sorting (e.g., "900" > "1000" alphanumerically speaking). Later
+                # on I might try to relax this restriction by padding short years
+                # with zeros, but it would take some doing.
+                raise ValueError("The year must be no less than 1000 and no greater than 9999.")
+            # else
+            try:
                 date(year=int_year, month=int_month, day=int_day)
             except ValueError as e:
                 raise e
 
-            # Looks like we have a valid date
-            base = f"{int(year):04}.{int(month):02}.{int(day):02}"
+            # Now we know the date is not invalid, though it may still be fuzzy.
+            base = f"{year}.{month}.{day}"
 
             # Now deal with the time values.
             if not {hour, minute, tz} <= {None, ""}:
                 # Some time element has been specified
-                if not day or not month:
+                if day == "00":
                     raise ValueError("If any time fields are specified, day and month must also be specified")
-                # Now we know that day, month, and year are all specified
+
+                # Now we know that day, month, and year are all specified and not fuzzy
                 if {hour, minute, tz} & {None, ""}:
                     # Although we know that some time element has been specified, not all of them are
                     raise ValueError("If any of hour, minute, or timezone is specified, all must be specified")
@@ -169,13 +181,13 @@ class FuzzyDate(str):
                 try:
                     hour = f"{int(hour):02}"
                 except (ValueError, TypeError):
-                    raise ValueError("Hour must be a valid integer")
+                    raise ValueError("Hour must be an integer.")
                 if not (0 <= int(hour) < 24):
                     raise ValueError("Hour must be between 0 and 23.")
                 try:
                     minute = f"{int(minute):02}"
                 except (ValueError, TypeError):
-                    raise ValueError("Minute must be a valid integer")
+                    raise ValueError("Minute must be an integer.")
                 if not (0 <= int(minute) < 60):
                     raise ValueError("Minute must be between 0 and 59.")
 
@@ -193,6 +205,23 @@ class FuzzyDate(str):
         instance.tz = tz
         return instance
 
+    def __iter__(self):
+        # Map component names to instance attributes
+        component_map = {
+            'y': self.year,
+            'm': self.month,
+            'd': self.day,
+        }
+
+        # Build ordered date components
+        components = [component_map[c] for c in DATE_FIELD_ORDER]
+
+        # Optionally add time parts if they are defined
+        if self.hour not in ("", None) and self.minute not in ("", None) and self.tz:
+            components.extend([self.hour, self.minute, self.tz])
+
+        return iter(components)
+    
     def __repr__(self):
         return f"FuzzyDate({super().__repr__()})"
 
@@ -202,7 +231,7 @@ class FuzzyDate(str):
             [data_dict[el].lstrip(TRIM_CHAR) for el in DATE_FIELD_ORDER if data_dict[el]]
         )
         if self.hour is not None and self.minute is not None and self.tz:
-            return f"{date_part} {int(self.hour):02}:{int(self.minute):02} {self.tz}"
+            return f"{date_part} {self.hour}:{self.minute} {self.tz}"
         # else
         return date_part
 
@@ -271,17 +300,16 @@ class FuzzyDateWidget(forms.MultiWidget):
             widget.attrs["data-name"] = widget_name
 
     def decompress(self, value):
-        print("Decompress called with value:", str(value))
         if value:  # will be a FuzzyDate object
             data_dict = dict(zip("ymd", value.as_list()))
             time_str = (
-                f"{int(value.hour):02}:{int(value.minute):02}"
+                f"{value.hour}:{value.minute}"
                 if value.hour is not None and value.minute is not None
                 else ""
             )
-            return [
-                data_dict[el] for el in DATE_FIELD_ORDER   # rearrange to the user's preferred order
-            ] + [time_str, value.tz or ""]
+            retlist = [data_dict[el] for el in DATE_FIELD_ORDER]  # rearrange to the user's preferred order
+            retlist += [time_str, value.tz or ""]
+            return retlist
         return ["", "", "", "", ""]
 
     # The following properties allow the form to access the subwidgets using user-friendly names.
@@ -379,11 +407,6 @@ class FuzzyDateField(models.CharField):
 
     def from_db_value(self, value, expression, connection):
         return self.to_python(value)
-        #if value:
-        #    # Values coming from the DB should be in the format yyyy.mm.dd with an optional time and timezone
-        #    return FuzzyDate(value)
-        ## else
-        #return value
 
     def to_python(self, value):
         if isinstance(value, FuzzyDate):
