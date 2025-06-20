@@ -195,8 +195,8 @@ class FuzzyDate(str):
 
         instance = super().__new__(cls, base)
         instance.year = year
-        instance.month = month
-        instance.day = day
+        instance.month = "" if month == "00" else month
+        instance.day = "" if day == "00" else day
         instance.hour = hour
         instance.minute = minute
         instance.tz = tz
@@ -247,11 +247,27 @@ class FuzzyDate(str):
             FuzzyDate(y=end_year, m=end_month, d=end_day)
         )
 
+    def to_date(self):
+        """
+        Convert this FuzzyDate instance to a date object, if possible
+        """
+        if self.is_fuzzy:
+            return None
+        # else
+        try:
+            return date(
+                year=int(self.year),
+                month=int(self.month),
+                day=int(self.day)
+            )
+        except Exception as e:
+            raise ValueError(f"Unable to convert FuzzyDate to date: {e}")
+
     def to_datetime(self):
         """
         Convert this FuzzyDate instance to a timezone-aware datetime.datetime object, if possible
         """
-        if any(val in (None, "") for val in [self.year, self.month, self.day, self.hour, self.minute, self.tz]):
+        if self.is_fuzzy or any(val in (None, "") for val in [self.hour, self.minute, self.tz]):
             return None
         # else
         try:
