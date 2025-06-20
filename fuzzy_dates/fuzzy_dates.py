@@ -247,7 +247,7 @@ class FuzzyDate(str):
             FuzzyDate(y=end_year, m=end_month, d=end_day)
         )
 
-    def get_datetime(self):
+    def to_datetime(self):
         """
         Convert this FuzzyDate instance to a timezone-aware datetime.datetime object, if possible
         """
