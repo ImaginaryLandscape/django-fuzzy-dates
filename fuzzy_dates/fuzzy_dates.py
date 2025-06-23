@@ -80,12 +80,10 @@ class FuzzyDate(str):
                 tz = seed.tz
 
             elif isinstance(seed, datetime):
-                if seed.tzinfo is None:
-                    raise ValueError("Datetime must be timezone-aware or 'Etc/UTC'.")
-                elif seed.tzinfo == timezone.utc:
+                if seed.tzinfo is None or seed.tzinfo == timezone.utc:
                     tz_key = "Etc/UTC"
                 elif not hasattr(seed.tzinfo, "key"):
-                    raise ValueError("Datetime must use a named IANA zone or 'Etc/UTC'.")
+                    raise ValueError("Datetime must use a named IANA timezone or 'Etc/UTC'.")
                 else:
                     tz_key = seed.tzinfo.key  # e.g., 'America/Chicago'
                 # else
