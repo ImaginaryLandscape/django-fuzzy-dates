@@ -212,7 +212,7 @@ class FuzzyDate(str):
         components = [component_map[c] for c in DATE_FIELD_ORDER]
 
         # Optionally add time parts if they are defined
-        if self.hour not in ("", None) and self.minute not in ("", None) and self.tz:
+        if self.has_time() and self.has_timezone():
             components.extend([self.hour, self.minute, self.tz])
 
         return iter(components)
@@ -225,7 +225,7 @@ class FuzzyDate(str):
         date_part = DATE_FIELD_SEPARATOR.join(
             [data_dict[el].lstrip(TRIM_CHAR) for el in DATE_FIELD_ORDER if data_dict[el]]
         )
-        if self.hour is not None and self.minute is not None and self.tz:
+        if self.has_time() and self.has_timezone():
             return f"{date_part} {self.hour}:{self.minute} {self.tz}"
         # else
         return date_part
@@ -244,6 +244,19 @@ class FuzzyDate(str):
             FuzzyDate(y=start_year, m=start_month, d=start_day),
             FuzzyDate(y=end_year, m=end_month, d=end_day)
         )
+
+    def has_time(self):
+        return self.hour not in ("", None) and self.minute not in ("", None)
+
+    def has_timezone(self):
+        return bool(self.tz)
+
+    def has_datetime(self):
+        return not self.is_fuzzy and self.has_time() and self.has_timezone()
+
+    @property
+    def is_fuzzy(self):
+        return self.day == ""
 
     def to_date(self):
         """
@@ -265,7 +278,7 @@ class FuzzyDate(str):
         """
         Convert this FuzzyDate instance to a timezone-aware datetime.datetime object, if possible
         """
-        if self.is_fuzzy or any(val in (None, "") for val in [self.hour, self.minute, self.tz]):
+        if not self.has_datetime():
             return None
         # else
         try:
@@ -279,10 +292,6 @@ class FuzzyDate(str):
             )
         except Exception as e:
             raise ValueError(f"Unable to convert FuzzyDate to datetime: {e}")
-    
-    @property
-    def is_fuzzy(self):
-        return self.day == ""
 
 
 class FuzzyDateWidget(forms.MultiWidget):
@@ -313,11 +322,7 @@ class FuzzyDateWidget(forms.MultiWidget):
     def decompress(self, value):
         if value:  # will be a FuzzyDate object
             data_dict = dict(zip("ymd", value.as_list()))
-            time_str = (
-                f"{value.hour}:{value.minute}"
-                if value.hour is not None and value.minute is not None
-                else ""
-            )
+            time_str = f"{value.hour}:{value.minute}" if value.has_time() else ""
             retlist = [data_dict[el] for el in DATE_FIELD_ORDER]  # rearrange to the user's preferred order
             retlist += [time_str, value.tz or ""]
             return retlist
