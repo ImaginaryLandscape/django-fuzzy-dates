@@ -111,12 +111,15 @@ class FuzzyDate(str):
             def norm(val):
                 return "" if val is None else val
 
-            year = norm(kwargs.get("y"))
-            month = norm(kwargs.get("m"))
-            day = norm(kwargs.get("d"))
-            hour = norm(kwargs.get("hour"))
-            minute = norm(kwargs.get("minute"))
-            tz = norm(kwargs.get("tz"))
+            year = norm(kwargs.pop("y", ""))
+            month = norm(kwargs.pop("m", ""))
+            day = norm(kwargs.pop("d", ""))
+            hour = norm(kwargs.pop("hour", ""))
+            minute = norm(kwargs.pop("minute", ""))
+            tz = norm(kwargs.pop("tz", ""))
+
+            if kwargs:
+                raise ValueError(f"Unexpected keyword arguments when creating FuzzyDate: {', '.join(kwargs.keys())}")
 
 
         # Now we have all our values stored in variables "year", "month", etc.  Depending on the type
@@ -433,3 +436,81 @@ class FuzzyDateField(models.CharField):
             return FuzzyDate(value)
         except ValueError as e:
             raise ValidationError(e)
+
+    def get_prep_value(self, value):
+        """
+        Prepare the value for database storage
+        """
+        if value in self.empty_values:
+            return None
+
+        if isinstance(value, datetime):
+            tz_key = None
+            if value.tzinfo is None or value.tzinfo == timezone.utc:
+                tz_key = "Etc/UTC"
+            elif hasattr(value.tzinfo, "key"):
+                tz_key = value.tzinfo.key
+            else:
+                raise ValidationError(
+                    "Datetime must have a named IANA timezone or UTC."
+                )
+            return value.strftime(f"%Y.%m.%d %H:%M {tz_key}")
+
+        if isinstance(value, date):
+            return value.strftime("%Y.%m.%d")
+
+        if isinstance(value, FuzzyDate):
+            return str(value)
+
+        if isinstance(value, str):
+            # Assume already in correct form
+            return value.strip()
+
+        raise ValidationError(f"Cannot prepare value of type {type(value)} for FuzzyDateField.")
+
+
+# Custom lookup to handle IS NULL and IS NOT NULL for FuzzyDateField,
+@FuzzyDateField.register_lookup
+class FuzzyIsNullLookup(models.lookups.IsNull):
+    def as_sql(self, compiler, connection):
+        lhs, lhs_params = self.process_lhs(compiler, connection)
+        if self.rhs:
+            return f"({lhs} IS NULL OR {lhs} = '')", lhs_params
+        else:
+            return f"({lhs} IS NOT NULL AND {lhs} <> '')", lhs_params
+
+
+# Mixin to exclude empty strings and NULLs from fuzzy date comparisons
+class _FuzzyExcludeEmptyBase:
+    """
+    Mixin that wraps a comparison operator with exclusion of NULL and empty strings.
+    """
+    operator = None  # must be overridden by subclasses
+
+    def as_sql(self, compiler, connection):
+        lhs, lhs_params = self.process_lhs(compiler, connection)
+        rhs, rhs_params = self.process_rhs(compiler, connection)
+        # combine parameters and build guarded SQL
+        sql = f"({lhs} <> '' AND {lhs} IS NOT NULL AND {lhs} {self.operator} {rhs})"
+        params = lhs_params + rhs_params
+        return sql, params
+
+
+@FuzzyDateField.register_lookup
+class FuzzyLessThan(_FuzzyExcludeEmptyBase, models.lookups.LessThan):
+    operator = "<"
+
+
+@FuzzyDateField.register_lookup
+class FuzzyLessThanOrEqual(_FuzzyExcludeEmptyBase, models.lookups.LessThanOrEqual):
+    operator = "<="
+
+
+@FuzzyDateField.register_lookup
+class FuzzyGreaterThan(_FuzzyExcludeEmptyBase, models.lookups.GreaterThan):
+    operator = ">"
+
+
+@FuzzyDateField.register_lookup
+class FuzzyGreaterThanOrEqual(_FuzzyExcludeEmptyBase, models.lookups.GreaterThanOrEqual):
+    operator = ">="
