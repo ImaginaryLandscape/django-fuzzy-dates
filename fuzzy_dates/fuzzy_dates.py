@@ -437,37 +437,6 @@ class FuzzyDateField(models.CharField):
         except ValueError as e:
             raise ValidationError(e)
 
-    def get_prep_value(self, value):
-        """
-        Prepare the value for database storage
-        """
-        if value in self.empty_values:
-            return None
-
-        if isinstance(value, datetime):
-            tz_key = None
-            if value.tzinfo is None or value.tzinfo == timezone.utc:
-                tz_key = "Etc/UTC"
-            elif hasattr(value.tzinfo, "key"):
-                tz_key = value.tzinfo.key
-            else:
-                raise ValidationError(
-                    "Datetime must have a named IANA timezone or UTC."
-                )
-            return value.strftime(f"%Y.%m.%d %H:%M {tz_key}")
-
-        if isinstance(value, date):
-            return value.strftime("%Y.%m.%d")
-
-        if isinstance(value, FuzzyDate):
-            return str(value)
-
-        if isinstance(value, str):
-            # Assume already in correct form
-            return value.strip()
-
-        raise ValidationError(f"Cannot prepare value of type {type(value)} for FuzzyDateField.")
-
 
 # Custom lookup to handle IS NULL and IS NOT NULL for FuzzyDateField,
 @FuzzyDateField.register_lookup
